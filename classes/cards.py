@@ -1,6 +1,5 @@
 from uuid import uuid1
 
-
 class Cards:
     def __init__(
         self,
