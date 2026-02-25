@@ -1,10 +1,15 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from typing import Dict
 import uuid
 
 
 class ValidationError(Exception):
+    pass
+
+
+class NotFoundError(Exception):
     pass
 
 
@@ -82,25 +87,62 @@ class Booking:
         self.status = BookingStatus.CANCELED
 
 
+@dataclass
+class Repository:
+    customers: Dict[str, Customer] = field(default_factory=dict)
+    events: Dict[str, Event] = field(default_factory=dict)
+    seats: Dict[str, Seat] = field(default_factory=dict)
+    bookings: Dict[str, Booking] = field(default_factory=dict)
+
+    def add_customer(self, name: str, email: str) -> Customer:
+        c = Customer(id=new_id("cust"), name=name, email=email)
+        c.validate()
+        self.customers[c.id] = c
+        return c
+
+    def add_event(self, title: str, date: datetime) -> Event:
+        e = Event(id=new_id("evt"), title=title, date=date)
+        e.validate()
+        self.events[e.id] = e
+        return e
+
+    def add_seat(self, event_id: str, row: int, number: int, price: int) -> Seat:
+        if event_id not in self.events:
+            raise NotFoundError(f"Событие не найдено: {event_id}")
+        s = Seat(id=new_id("seat"), event_id=event_id, row=row, number=number, price=price)
+        s.validate()
+        self.seats[s.id] = s
+        return s
+
+    def create_booking(self, customer_id: str, event_id: str, seat_id: str) -> Booking:
+        if customer_id not in self.customers:
+            raise NotFoundError(f"Клиент не найден: {customer_id}")
+        if event_id not in self.events:
+            raise NotFoundError(f"Событие не найдено: {event_id}")
+        if seat_id not in self.seats:
+            raise NotFoundError(f"Место не найдено: {seat_id}")
+
+        b = Booking(id=new_id("book"), customer_id=customer_id, event_id=event_id, seat_id=seat_id)
+        self.bookings[b.id] = b
+        return b
+
+
 def main() -> None:
-    customer = Customer(id=new_id("cust"), name="Иван Иванов", email="ivan@mail.ru")
-    customer.validate()
+    repo = Repository()
 
-    event = Event(id=new_id("evt"), title="Концерт группы Python", date=datetime(2026, 3, 10, 19, 0))
-    event.validate()
+    customer = repo.add_customer("Иван Иванов", "ivan@mail.ru")
+    event = repo.add_event("Концерт группы Python", datetime(2026, 3, 10, 19, 0))
+    seat1 = repo.add_seat(event.id, 1, 1, 2000)
 
-    seat = Seat(id=new_id("seat"), event_id=event.id, row=1, number=1, price=2000)
-    seat.validate()
-
-    booking = Booking(id=new_id("book"), customer_id=customer.id, event_id=event.id, seat_id=seat.id)
+    booking = repo.create_booking(customer.id, event.id, seat1.id)
     print("Создано бронирование:", booking)
 
-    booking.confirm()
-    print("Подтверждено:", booking)
+    repo.bookings[booking.id].confirm()
+    print("Подтверждено:", repo.bookings[booking.id])
 
 
 if __name__ == "__main__":
     try:
         main()
-    except (ValidationError, BookingStateError) as e:
+    except (ValidationError, NotFoundError, BookingStateError) as e:
         print("Ошибка:", e)
