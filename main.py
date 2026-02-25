@@ -1,9 +1,14 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 import uuid
 
 
 class ValidationError(Exception):
+    pass
+
+
+class BookingStateError(Exception):
     pass
 
 
@@ -14,6 +19,12 @@ def new_id(prefix: str) -> str:
 def ensure_nonempty(value: str, field_name: str) -> None:
     if not value or not value.strip():
         raise ValidationError(f"Поле '{field_name}' не должно быть пустым.")
+
+
+class BookingStatus(str, Enum):
+    DRAFT = "DRAFT"
+    CONFIRMED = "CONFIRMED"
+    CANCELED = "CANCELED"
 
 
 @dataclass(slots=True)
@@ -53,6 +64,24 @@ class Seat:
             raise ValidationError("price не может быть отрицательной.")
 
 
+@dataclass(slots=True)
+class Booking:
+    id: str
+    customer_id: str
+    event_id: str
+    seat_id: str
+    status: BookingStatus = BookingStatus.DRAFT
+    created_at: datetime = field(default_factory=datetime.utcnow)
+
+    def confirm(self) -> None:
+        if self.status != BookingStatus.DRAFT:
+            raise BookingStateError("Подтвердить можно только бронирование в статусе DRAFT.")
+        self.status = BookingStatus.CONFIRMED
+
+    def cancel(self) -> None:
+        self.status = BookingStatus.CANCELED
+
+
 def main() -> None:
     customer = Customer(id=new_id("cust"), name="Иван Иванов", email="ivan@mail.ru")
     customer.validate()
@@ -63,13 +92,15 @@ def main() -> None:
     seat = Seat(id=new_id("seat"), event_id=event.id, row=1, number=1, price=2000)
     seat.validate()
 
-    print("OK:", customer)
-    print("OK:", event)
-    print("OK:", seat)
+    booking = Booking(id=new_id("book"), customer_id=customer.id, event_id=event.id, seat_id=seat.id)
+    print("Создано бронирование:", booking)
+
+    booking.confirm()
+    print("Подтверждено:", booking)
 
 
 if __name__ == "__main__":
     try:
         main()
-    except ValidationError as e:
-        print("Ошибка валидации:", e)
+    except (ValidationError, BookingStateError) as e:
+        print("Ошибка:", e)
