@@ -1,9 +1,16 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Dict, Optional
+import json
 import uuid
 
+
+# ---------------------------
+# Exceptions
+# ---------------------------
 
 class DomainError(Exception):
     pass
@@ -25,6 +32,10 @@ class BookingStateError(DomainError):
     pass
 
 
+# ---------------------------
+# Helpers
+# ---------------------------
+
 def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex}"
 
@@ -33,6 +44,18 @@ def ensure_nonempty(value: str, field_name: str) -> None:
     if not value or not value.strip():
         raise ValidationError(f"Поле '{field_name}' не должно быть пустым.")
 
+
+def dt_to_str(dt: datetime) -> str:
+    return dt.isoformat(timespec="seconds")
+
+
+def str_to_dt(s: str) -> datetime:
+    return datetime.fromisoformat(s)
+
+
+# ---------------------------
+# Domain model
+# ---------------------------
 
 class BookingStatus(str, Enum):
     DRAFT = "DRAFT"
@@ -51,6 +74,15 @@ class Customer:
         if "@" not in self.email:
             raise ValidationError("Email должен содержать '@'.")
 
+    def to_dict(self) -> dict:
+        return {"id": self.id, "name": self.name, "email": self.email}
+
+    @staticmethod
+    def from_dict(d: dict) -> "Customer":
+        c = Customer(id=d["id"], name=d["name"], email=d["email"])
+        c.validate()
+        return c
+
 
 @dataclass(slots=True)
 class Event:
@@ -60,6 +92,15 @@ class Event:
 
     def validate(self) -> None:
         ensure_nonempty(self.title, "title")
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "title": self.title, "date": dt_to_str(self.date)}
+
+    @staticmethod
+    def from_dict(d: dict) -> "Event":
+        e = Event(id=d["id"], title=d["title"], date=str_to_dt(d["date"]))
+        e.validate()
+        return e
 
 
 @dataclass(slots=True)
@@ -75,6 +116,27 @@ class Seat:
             raise ValidationError("row и number должны быть > 0.")
         if self.price < 0:
             raise ValidationError("price не может быть отрицательной.")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "event_id": self.event_id,
+            "row": self.row,
+            "number": self.number,
+            "price": self.price,
+        }
+
+    @staticmethod
+    def from_dict(d: dict) -> "Seat":
+        s = Seat(
+            id=d["id"],
+            event_id=d["event_id"],
+            row=int(d["row"]),
+            number=int(d["number"]),
+            price=int(d["price"]),
+        )
+        s.validate()
+        return s
 
 
 @dataclass(slots=True)
@@ -94,6 +156,32 @@ class Booking:
     def cancel(self) -> None:
         self.status = BookingStatus.CANCELED
 
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "customer_id": self.customer_id,
+            "event_id": self.event_id,
+            "seat_id": self.seat_id,
+            "status": self.status.value,
+            "created_at": dt_to_str(self.created_at),
+        }
+
+    @staticmethod
+    def from_dict(d: dict) -> "Booking":
+        b = Booking(
+            id=d["id"],
+            customer_id=d["customer_id"],
+            event_id=d["event_id"],
+            seat_id=d["seat_id"],
+            status=BookingStatus(d.get("status", "DRAFT")),
+            created_at=str_to_dt(d["created_at"]),
+        )
+        return b
+
+
+# ---------------------------
+# Repository + JSON
+# ---------------------------
 
 @dataclass
 class Repository:
@@ -117,7 +205,6 @@ class Repository:
     def add_seat(self, event_id: str, row: int, number: int, price: int) -> Seat:
         self.get_event(event_id)
 
-        # уникальность (row, number) в рамках события
         for s in self.seats.values():
             if s.event_id == event_id and s.row == row and s.number == number:
                 raise ValidationError("Такое место (row, number) уже существует для этого события.")
@@ -188,25 +275,57 @@ class Repository:
         except KeyError as e:
             raise NotFoundError(f"Бронирование не найдено: {booking_id}") from e
 
+    def to_dict(self) -> dict:
+        return {
+            "customers": [c.to_dict() for c in self.customers.values()],
+            "events": [e.to_dict() for e in self.events.values()],
+            "seats": [s.to_dict() for s in self.seats.values()],
+            "bookings": [b.to_dict() for b in self.bookings.values()],
+        }
+
+    @staticmethod
+    def from_dict(d: dict) -> "Repository":
+        repo = Repository()
+        for c in d.get("customers", []):
+            obj = Customer.from_dict(c)
+            repo.customers[obj.id] = obj
+        for e in d.get("events", []):
+            obj = Event.from_dict(e)
+            repo.events[obj.id] = obj
+        for s in d.get("seats", []):
+            obj = Seat.from_dict(s)
+            repo.seats[obj.id] = obj
+        for b in d.get("bookings", []):
+            obj = Booking.from_dict(b)
+            repo.bookings[obj.id] = obj
+        return repo
+
+    def save_json(self, path: str) -> None:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(self.to_dict(), f, ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def load_json(path: str) -> "Repository":
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return Repository.from_dict(data)
+
 
 def main() -> None:
     repo = Repository()
-
     customer = repo.add_customer("Иван Иванов", "ivan@mail.ru")
     event = repo.add_event("Концерт группы Python", datetime(2026, 3, 10, 19, 0))
     seat1 = repo.add_seat(event.id, 1, 1, 2000)
 
     booking = repo.create_booking(customer.id, event.id, seat1.id)
-    print("Создано бронирование:", booking)
-
     repo.confirm_booking(booking.id)
-    print("Подтверждено:", repo.get_booking(booking.id))
 
-    print("\nПробуем занять то же место вторым бронированием:")
-    try:
-        repo.create_booking(customer.id, event.id, seat1.id)
-    except SeatUnavailableError as e:
-        print("Ожидаемая ошибка:", e)
+    repo.save_json("demo.json")
+    print("OK: saved demo.json")
+
+    repo2 = Repository.load_json("demo.json")
+    print("OK: loaded demo.json")
+    print("Events after load:", repo2.events)
 
 
 if __name__ == "__main__":
@@ -214,5 +333,9 @@ if __name__ == "__main__":
         main()
     except DomainError as e:
         print("Ошибка домена:", e)
+    except json.JSONDecodeError:
+        print("Ошибка: файл JSON повреждён или имеет неверный формат.")
+    except FileNotFoundError:
+        print("Ошибка: файл не найден.")
     except Exception as e:
         print(f"Непредвиденная ошибка: {type(e).__name__}: {e}")
