@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Dict, Optional
 import json
 import uuid
+import xml.etree.ElementTree as ET
 
 
 # ---------------------------
@@ -180,7 +181,7 @@ class Booking:
 
 
 # ---------------------------
-# Repository + JSON
+# Repository + JSON/XML
 # ---------------------------
 
 @dataclass
@@ -275,6 +276,8 @@ class Repository:
         except KeyError as e:
             raise NotFoundError(f"Бронирование не найдено: {booking_id}") from e
 
+    # ---- JSON ----
+
     def to_dict(self) -> dict:
         return {
             "customers": [c.to_dict() for c in self.customers.values()],
@@ -310,6 +313,113 @@ class Repository:
             data = json.load(f)
         return Repository.from_dict(data)
 
+    # ---- XML ----
+
+    def to_xml_element(self) -> ET.Element:
+        root = ET.Element("TicketSystem")
+
+        customers_el = ET.SubElement(root, "Customers")
+        for c in self.customers.values():
+            el = ET.SubElement(customers_el, "Customer", {"id": c.id})
+            ET.SubElement(el, "Name").text = c.name
+            ET.SubElement(el, "Email").text = c.email
+
+        events_el = ET.SubElement(root, "Events")
+        for e in self.events.values():
+            el = ET.SubElement(events_el, "Event", {"id": e.id})
+            ET.SubElement(el, "Title").text = e.title
+            ET.SubElement(el, "Date").text = dt_to_str(e.date)
+
+        seats_el = ET.SubElement(root, "Seats")
+        for s in self.seats.values():
+            el = ET.SubElement(seats_el, "Seat", {"id": s.id})
+            ET.SubElement(el, "EventId").text = s.event_id
+            ET.SubElement(el, "Row").text = str(s.row)
+            ET.SubElement(el, "Number").text = str(s.number)
+            ET.SubElement(el, "Price").text = str(s.price)
+
+        bookings_el = ET.SubElement(root, "Bookings")
+        for b in self.bookings.values():
+            el = ET.SubElement(bookings_el, "Booking", {"id": b.id})
+            ET.SubElement(el, "CustomerId").text = b.customer_id
+            ET.SubElement(el, "EventId").text = b.event_id
+            ET.SubElement(el, "SeatId").text = b.seat_id
+            ET.SubElement(el, "Status").text = b.status.value
+            ET.SubElement(el, "CreatedAt").text = dt_to_str(b.created_at)
+
+        return root
+
+    @staticmethod
+    def from_xml_element(root: ET.Element) -> "Repository":
+        repo = Repository()
+
+        customers_el = root.find("Customers")
+        if customers_el is not None:
+            for el in customers_el.findall("Customer"):
+                cid = el.get("id", "")
+                name = el.findtext("Name") or ""
+                email = el.findtext("Email") or ""
+                c = Customer(id=cid, name=name, email=email)
+                c.validate()
+                repo.customers[c.id] = c
+
+        events_el = root.find("Events")
+        if events_el is not None:
+            for el in events_el.findall("Event"):
+                eid = el.get("id", "")
+                title = el.findtext("Title") or ""
+                date_s = el.findtext("Date") or ""
+                e = Event(id=eid, title=title, date=str_to_dt(date_s))
+                e.validate()
+                repo.events[e.id] = e
+
+        seats_el = root.find("Seats")
+        if seats_el is not None:
+            for el in seats_el.findall("Seat"):
+                sid = el.get("id", "")
+                event_id = el.findtext("EventId") or ""
+                row = int(el.findtext("Row") or "0")
+                number = int(el.findtext("Number") or "0")
+                price = int(el.findtext("Price") or "0")
+                s = Seat(id=sid, event_id=event_id, row=row, number=number, price=price)
+                s.validate()
+                repo.seats[s.id] = s
+
+        bookings_el = root.find("Bookings")
+        if bookings_el is not None:
+            for el in bookings_el.findall("Booking"):
+                bid = el.get("id", "")
+                customer_id = el.findtext("CustomerId") or ""
+                event_id = el.findtext("EventId") or ""
+                seat_id = el.findtext("SeatId") or ""
+                status = BookingStatus(el.findtext("Status") or "DRAFT")
+                created_at = str_to_dt(el.findtext("CreatedAt") or dt_to_str(datetime.utcnow()))
+                b = Booking(
+                    id=bid,
+                    customer_id=customer_id,
+                    event_id=event_id,
+                    seat_id=seat_id,
+                    status=status,
+                    created_at=created_at,
+                )
+                repo.bookings[b.id] = b
+
+        return repo
+
+    def save_xml(self, path: str) -> None:
+        root = self.to_xml_element()
+        tree = ET.ElementTree(root)
+        ET.indent(tree, space="  ")  # Python 3.9+
+        tree.write(path, encoding="utf-8", xml_declaration=True)
+
+    @staticmethod
+    def load_xml(path: str) -> "Repository":
+        tree = ET.parse(path)
+        root = tree.getroot()
+        if root.tag != "TicketSystem":
+            raise ValidationError("Неверный корневой тег XML. Ожидался <TicketSystem>.")
+        return Repository.from_xml_element(root)
+
 
 def main() -> None:
     repo = Repository()
@@ -321,11 +431,13 @@ def main() -> None:
     repo.confirm_booking(booking.id)
 
     repo.save_json("demo.json")
-    print("OK: saved demo.json")
+    repo.save_xml("demo.xml")
+    print("OK: saved demo.json and demo.xml")
 
-    repo2 = Repository.load_json("demo.json")
-    print("OK: loaded demo.json")
-    print("Events after load:", repo2.events)
+    repo_json = Repository.load_json("demo.json")
+    repo_xml = Repository.load_xml("demo.xml")
+    print("Loaded JSON events:", repo_json.events)
+    print("Loaded XML bookings:", repo_xml.bookings)
 
 
 if __name__ == "__main__":
@@ -333,9 +445,15 @@ if __name__ == "__main__":
         main()
     except DomainError as e:
         print("Ошибка домена:", e)
-    except json.JSONDecodeError:
-        print("Ошибка: файл JSON повреждён или имеет неверный формат.")
+    except ValueError:
+        print("Ошибка: неверный формат числа/даты.")
     except FileNotFoundError:
         print("Ошибка: файл не найден.")
+    except PermissionError:
+        print("Ошибка: нет прав доступа к файлу.")
+    except json.JSONDecodeError:
+        print("Ошибка: файл JSON повреждён или имеет неверный формат.")
+    except ET.ParseError:
+        print("Ошибка: файл XML повреждён или имеет неверный формат.")
     except Exception as e:
         print(f"Непредвиденная ошибка: {type(e).__name__}: {e}")
