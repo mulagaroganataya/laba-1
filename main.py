@@ -9,10 +9,6 @@ import uuid
 import xml.etree.ElementTree as ET
 
 
-# ---------------------------
-# Exceptions
-# ---------------------------
-
 class DomainError(Exception):
     pass
 
@@ -33,17 +29,8 @@ class BookingStateError(DomainError):
     pass
 
 
-# ---------------------------
-# Helpers
-# ---------------------------
-
 def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex}"
-
-
-def ensure_nonempty(value: str, field_name: str) -> None:
-    if not value or not value.strip():
-        raise ValidationError(f"Поле '{field_name}' не должно быть пустым.")
 
 
 def dt_to_str(dt: datetime) -> str:
@@ -54,9 +41,10 @@ def str_to_dt(s: str) -> datetime:
     return datetime.fromisoformat(s)
 
 
-# ---------------------------
-# Domain model
-# ---------------------------
+def ensure_nonempty(value: str, field_name: str) -> None:
+    if not value or not value.strip():
+        raise ValidationError(f"Поле '{field_name}' не должно быть пустым.")
+
 
 class BookingStatus(str, Enum):
     DRAFT = "DRAFT"
@@ -169,7 +157,7 @@ class Booking:
 
     @staticmethod
     def from_dict(d: dict) -> "Booking":
-        b = Booking(
+        return Booking(
             id=d["id"],
             customer_id=d["customer_id"],
             event_id=d["event_id"],
@@ -177,12 +165,7 @@ class Booking:
             status=BookingStatus(d.get("status", "DRAFT")),
             created_at=str_to_dt(d["created_at"]),
         )
-        return b
 
-
-# ---------------------------
-# Repository + JSON/XML
-# ---------------------------
 
 @dataclass
 class Repository:
@@ -205,11 +188,9 @@ class Repository:
 
     def add_seat(self, event_id: str, row: int, number: int, price: int) -> Seat:
         self.get_event(event_id)
-
         for s in self.seats.values():
             if s.event_id == event_id and s.row == row and s.number == number:
                 raise ValidationError("Такое место (row, number) уже существует для этого события.")
-
         seat = Seat(id=new_id("seat"), event_id=event_id, row=row, number=number, price=price)
         seat.validate()
         self.seats[seat.id] = seat
@@ -227,13 +208,10 @@ class Repository:
         self.get_customer(customer_id)
         self.get_event(event_id)
         seat = self.get_seat(seat_id)
-
         if seat.event_id != event_id:
             raise ValidationError("Выбранное место не относится к выбранному событию.")
-
         if self.is_seat_taken(seat_id):
             raise SeatUnavailableError("Место уже занято.")
-
         booking = Booking(id=new_id("book"), customer_id=customer_id, event_id=event_id, seat_id=seat_id)
         self.bookings[booking.id] = booking
         return booking
@@ -276,8 +254,6 @@ class Repository:
         except KeyError as e:
             raise NotFoundError(f"Бронирование не найдено: {booking_id}") from e
 
-    # ---- JSON ----
-
     def to_dict(self) -> dict:
         return {
             "customers": [c.to_dict() for c in self.customers.values()],
@@ -312,8 +288,6 @@ class Repository:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         return Repository.from_dict(data)
-
-    # ---- XML ----
 
     def to_xml_element(self) -> ET.Element:
         root = ET.Element("TicketSystem")
@@ -409,7 +383,7 @@ class Repository:
     def save_xml(self, path: str) -> None:
         root = self.to_xml_element()
         tree = ET.ElementTree(root)
-        ET.indent(tree, space="  ")  # Python 3.9+
+        ET.indent(tree, space="  ")
         tree.write(path, encoding="utf-8", xml_declaration=True)
 
     @staticmethod
@@ -422,22 +396,47 @@ class Repository:
 
 
 def main() -> None:
+    print("Демонстрация работы системы бронирования\n")
+
     repo = Repository()
+
     customer = repo.add_customer("Иван Иванов", "ivan@mail.ru")
+    print("Создан клиент:", customer)
+
     event = repo.add_event("Концерт группы Python", datetime(2026, 3, 10, 19, 0))
+    print("Создано событие:", event)
+
     seat1 = repo.add_seat(event.id, 1, 1, 2000)
+    seat2 = repo.add_seat(event.id, 1, 2, 2000)
+    print("Созданы места:", seat1, seat2)
 
     booking = repo.create_booking(customer.id, event.id, seat1.id)
+    print("Создано бронирование (DRAFT):", booking)
+
     repo.confirm_booking(booking.id)
+    print("Бронирование подтверждено:", repo.get_booking(booking.id))
+
+    print("\nПробуем занять уже занятое место:")
+    try:
+        repo.create_booking(customer.id, event.id, seat1.id)
+    except SeatUnavailableError as e:
+        print("Ожидаемая ошибка:", e)
 
     repo.save_json("demo.json")
-    repo.save_xml("demo.xml")
-    print("OK: saved demo.json and demo.xml")
+    print("\nСохранено в demo.json")
 
-    repo_json = Repository.load_json("demo.json")
-    repo_xml = Repository.load_xml("demo.xml")
-    print("Loaded JSON events:", repo_json.events)
-    print("Loaded XML bookings:", repo_xml.bookings)
+    repo_from_json = Repository.load_json("demo.json")
+    print("Загружено из demo.json")
+    print("Events after load:", repo_from_json.events)
+
+    repo.save_xml("demo.xml")
+    print("\nСохранено в demo.xml")
+
+    repo_from_xml = Repository.load_xml("demo.xml")
+    print("Загружено из demo.xml")
+    print("Bookings after load:", repo_from_xml.bookings)
+
+    print("\nДемонстрация завершена успешно.")
 
 
 if __name__ == "__main__":
