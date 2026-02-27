@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, Optional
 import json
-import uuid
 import xml.etree.ElementTree as ET
 
 from exceptions import (
@@ -13,11 +12,8 @@ from exceptions import (
     SeatUnavailableError,
     BookingStateError,
 )
-from models import Customer, Event, Seat, Booking, BookingStatus, dt_to_str, str_to_dt
-
-
-def new_id(prefix: str) -> str:
-    return f"{prefix}_{uuid.uuid4().hex}"
+from models import Customer, Event, Seat, Booking, BookingStatus
+from utils import new_id, dt_to_str, str_to_dt
 
 
 @dataclass

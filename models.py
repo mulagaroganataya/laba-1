@@ -5,19 +5,7 @@ from datetime import datetime
 from enum import Enum
 
 from exceptions import ValidationError, BookingStateError
-
-
-def ensure_nonempty(value: str, field_name: str) -> None:
-    if not value or not value.strip():
-        raise ValidationError(f"Поле '{field_name}' не должно быть пустым.")
-
-
-def dt_to_str(dt: datetime) -> str:
-    return dt.isoformat(timespec="seconds")
-
-
-def str_to_dt(s: str) -> datetime:
-    return datetime.fromisoformat(s)
+from utils import ensure_nonempty, dt_to_str, str_to_dt
 
 
 class BookingStatus(str, Enum):
