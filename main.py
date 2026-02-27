@@ -8,26 +8,18 @@ import json
 import uuid
 import xml.etree.ElementTree as ET
 
-
-class DomainError(Exception):
-    pass
-
-
-class ValidationError(DomainError):
-    pass
-
-
-class NotFoundError(DomainError):
-    pass
+from exceptions import (
+    DomainError,
+    ValidationError,
+    NotFoundError,
+    SeatUnavailableError,
+    BookingStateError,
+)
 
 
-class SeatUnavailableError(DomainError):
-    pass
-
-
-class BookingStateError(DomainError):
-    pass
-
+# ---------------------------
+# Helpers (пока тут)
+# ---------------------------
 
 def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex}"
@@ -45,6 +37,11 @@ def ensure_nonempty(value: str, field_name: str) -> None:
     if not value or not value.strip():
         raise ValidationError(f"Поле '{field_name}' не должно быть пустым.")
 
+
+# ---------------------------
+# Domain model + Repository
+# (пока всё в main.py)
+# ---------------------------
 
 class BookingStatus(str, Enum):
     DRAFT = "DRAFT"
@@ -191,6 +188,7 @@ class Repository:
         for s in self.seats.values():
             if s.event_id == event_id and s.row == row and s.number == number:
                 raise ValidationError("Такое место (row, number) уже существует для этого события.")
+
         seat = Seat(id=new_id("seat"), event_id=event_id, row=row, number=number, price=price)
         seat.validate()
         self.seats[seat.id] = seat
@@ -208,10 +206,12 @@ class Repository:
         self.get_customer(customer_id)
         self.get_event(event_id)
         seat = self.get_seat(seat_id)
+
         if seat.event_id != event_id:
             raise ValidationError("Выбранное место не относится к выбранному событию.")
         if self.is_seat_taken(seat_id):
             raise SeatUnavailableError("Место уже занято.")
+
         booking = Booking(id=new_id("book"), customer_id=customer_id, event_id=event_id, seat_id=seat_id)
         self.bookings[booking.id] = booking
         return booking
@@ -254,6 +254,7 @@ class Repository:
         except KeyError as e:
             raise NotFoundError(f"Бронирование не найдено: {booking_id}") from e
 
+    # ---- JSON ----
     def to_dict(self) -> dict:
         return {
             "customers": [c.to_dict() for c in self.customers.values()],
@@ -289,6 +290,7 @@ class Repository:
             data = json.load(f)
         return Repository.from_dict(data)
 
+    # ---- XML ----
     def to_xml_element(self) -> ET.Element:
         root = ET.Element("TicketSystem")
 
@@ -383,7 +385,7 @@ class Repository:
     def save_xml(self, path: str) -> None:
         root = self.to_xml_element()
         tree = ET.ElementTree(root)
-        ET.indent(tree, space="  ")
+        ET.indent(tree, space="  ")  # Python 3.9+
         tree.write(path, encoding="utf-8", xml_declaration=True)
 
     @staticmethod
